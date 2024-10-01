@@ -1,173 +1,216 @@
-const express = require('express');
+require('dotenv').config();
 const mongoose = require('mongoose');
+const express = require('express');
 const app = express();
 const port = 3000;
-require('dotenv').config();
 
 app.use(express.json());
 
-// Connessione a MongoDB
+// Connessione unica a MongoDB senza opzioni deprecate
 mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  authSource: "admin"
-}).then(() => console.log('Connesso a MongoDB'))
-  .catch(err => console.error('Errore di connessione a MongoDB:', err));
+  auth: {
+    username: process.env.MONGO_USERNAME,
+    password: process.env.MONGO_PASSWORD
+  },
+  authSource: "admin"  // Il database dove l'utente è stato creato
+}).then(() => {
+  console.log('Connesso al database adventure');
+}).catch(err => {
+  console.error('Errore di connessione a MongoDB:', err);
+});
 
-// Schema per le storie
+// Schema per Conversazioni
 const conversationSchema = new mongoose.Schema({
-  name: { type: String, required: true },
+  conversation_id: { type: String, required: true },
+  chat_id: { type: String, required: true },
+  user_id: { type: String, required: true },
+  user_name: String,
+  adventure_name: { type: String, required: true },
   chosen_genre: String,
   chosen_item: String,
   chosen_location: String,
   character_description: String,
-  storyProgress: String,         // Progresso iniziale della storia
-  storyProgress_1: String,       // Progresso della storia nella continuazione
-  storyProgress_2: String,       // Parte conclusiva della storia
-  isCompleted: { type: Boolean, default: false },
+  story_text: { type: String, required: true },
+  isCompleted: { type: Boolean, default: false },  // Aggiunto per indicare se la storia è completa
   created_at: { type: Date, default: Date.now }
 });
 
 const Conversation = mongoose.model('Conversation', conversationSchema);
 
-// Endpoint per salvare una nuova sessione di storia
-app.post('/api/save-session', async (req, res) => {
+// Schema per Storie
+const storySchema = new mongoose.Schema({
+  conversation_id: { type: String, required: true, ref: 'Conversation' },  // ID della conversazione
+  story_text: { type: String, required: true },                            // Testo della storia completa
+  created_at: { type: Date, default: Date.now }
+});
+
+const Story = mongoose.model('Story', storySchema);
+
+// Endpoint per salvare una nuova conversazione e una nuova storia
+app.post('/api/save-conversation', async (req, res) => {
   try {
     const {
-      name,
+      conversation_id,
+      chat_id,
+      user_id,
+      user_name,
+      adventure_name,
       chosen_genre,
       chosen_item,
       chosen_location,
       character_description,
-      storyProgress,
-      storyProgress_1,
-      storyProgress_2
+      story_text,
+      isCompleted
     } = req.body;
 
-    // Verifica se tutte le parti della storia sono presenti
-    const isCompleted = storyProgress && storyProgress_1 && storyProgress_2 ? true : false;
-
-    if (!name || !storyProgress) {
-      return res.status(400).json({ message: 'Dati mancanti per il salvataggio' });
+    if (!conversation_id || !chat_id || !user_id || !adventure_name || !story_text) {
+      return res.status(400).json({ message: 'Dati mancanti per il salvataggio della conversazione' });
     }
 
+    // Salva la conversazione nel database
     const newConversation = new Conversation({
-      name,
+      conversation_id,
+      chat_id,
+      user_id,
+      user_name,
+      adventure_name,
       chosen_genre,
       chosen_item,
       chosen_location,
       character_description,
-      storyProgress,
-      storyProgress_1,
-      storyProgress_2,
-      isCompleted  // Imposta il flag in base al completamento
+      story_text,
+      isCompleted
     });
 
     await newConversation.save();
 
-    res.status(200).json({ message: 'Storia salvata con successo', savedStory: newConversation });
+    // Salva la storia completa nel database
+    const newStory = new Story({
+      conversation_id,
+      story_text: story_text
+    });
+
+    await newStory.save();
+
+    res.status(200).json({ message: 'Conversazione e storia salvate con successo', conversation: newConversation, story: newStory });
   } catch (error) {
-    console.error('Errore nel salvataggio della storia:', error.message);
-    res.status(500).json({ message: 'Errore nel salvataggio della storia', error: error.message });
+    console.error('Errore nel salvataggio della conversazione e della storia:', error.message);
+    res.status(500).json({ message: 'Errore nel salvataggio della conversazione e della storia', error: error.message });
   }
 });
 
-// Endpoint per recuperare storie incomplete (con tutti i dettagli rilevanti)
+// Endpoint per recuperare tutte le conversazioni incomplete (isCompleted: false)
+app.get('/api/get-incomplete-stories', async (req, res) => {
+  try {
+    const incompleteConversations = await Conversation.find({ isCompleted: false });
+
+    if (incompleteConversations.length === 0) {
+      return res.status(404).json({ message: 'Nessuna storia incompleta trovata' });
+    }
+
+    res.status(200).json({ incompleteConversations });
+  } catch (error) {
+    console.error('Errore nel recupero delle storie incomplete:', error.message);
+    res.status(500).json({ message: 'Errore nel recupero delle storie incomplete', error: error.message });
+  }
+});
+
+// Endpoint per recuperare tutte le conversazioni completate (isCompleted: true)
+app.get('/api/get-completed-stories', async (req, res) => {
+  try {
+    const completedConversations = await Conversation.find({ isCompleted: true });
+
+    if (completedConversations.length === 0) {
+      return res.status(404).json({ message: 'Nessuna storia completata trovata' });
+    }
+
+    res.status(200).json({ completedConversations });
+  } catch (error) {
+    console.error('Errore nel recupero delle storie completate:', error.message);
+    res.status(500).json({ message: 'Errore nel recupero delle storie completate', error: error.message });
+  }
+});
+
+// Endpoint per il recupero della conversazione
+app.get('/api/get-conversations', async (req, res) => {
+  try {
+    const conversations = await Conversation.find();
+
+    if (conversations.length === 0) {
+      return res.status(404).json({ message: 'Nessuna conversazione trovata' });
+    }
+
+    res.status(200).json({ conversations });
+  } catch (error) {
+    console.error('Errore nel recupero delle conversazioni:', error.message);
+    res.status(500).json({ message: 'Errore nel recupero delle conversazioni', error: error.message });
+  }
+});
+
+// Endpoint per il recupero di tutte le storie
 app.get('/api/get-stories', async (req, res) => {
   try {
-    // Recupera tutte le storie con isCompleted impostato a false
-    const stories = await Conversation.find({ isCompleted: false });
+    const stories = await Story.find();
 
     if (stories.length === 0) {
       return res.status(404).json({ message: 'Nessuna storia trovata' });
     }
 
-    // Imposta la variabile `list_story` con l'elenco delle storie incomplete
-    const list_story = stories.map(story => ({
-      id: story._id,
-      name: story.name,
-      genre: story.chosen_genre,
-      item: story.chosen_item,
-      location: story.chosen_location,
-      description: story.character_description
-    }));
-
-    // Restituisci tutte le storie incomplete
-    res.status(200).json({ stories, list_story });
+    res.status(200).json({ stories });
   } catch (error) {
     console.error('Errore nel recupero delle storie:', error.message);
     res.status(500).json({ message: 'Errore nel recupero delle storie', error: error.message });
   }
 });
 
-// **Nuovo Endpoint per recuperare storie complete**
-app.get('/api/get-completed-stories', async (req, res) => {
+// Endpoint per il recupero di una singola storia
+app.get('/api/get-story/:storyId', async (req, res) => {
   try {
-    // Recupera tutte le storie con isCompleted impostato a true
-    const completedStories = await Conversation.find({ isCompleted: true });
+    const story = await Story.findById(req.params.storyId);
 
-    if (completedStories.length === 0) {
-      return res.status(404).json({ message: 'Nessuna storia completa trovata' });
-    }
-
-    // Restituisci tutte le storie complete
-    res.status(200).json({ completedStories });
-  } catch (error) {
-    console.error('Errore nel recupero delle storie complete:', error.message);
-    res.status(500).json({ message: 'Errore nel recupero delle storie complete', error: error.message });
-  }
-});
-
-// Endpoint per aggiornare una storia esistente
-app.put('/api/update-story/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const {
-      name,
-      chosen_genre,
-      chosen_item,
-      chosen_location,
-      character_description,
-      storyProgress,
-      storyProgress_1,
-      storyProgress_2
-    } = req.body;
-
-    const storyToUpdate = await Conversation.findById(id);
-
-    if (!storyToUpdate) {
+    if (!story) {
       return res.status(404).json({ message: 'Storia non trovata' });
     }
 
-    // Aggiorna i campi forniti
-    if (name) storyToUpdate.name = name;
-    if (chosen_genre) storyToUpdate.chosen_genre = chosen_genre;
-    if (chosen_item) storyToUpdate.chosen_item = chosen_item;
-    if (chosen_location) storyToUpdate.chosen_location = chosen_location;
-    if (character_description) storyToUpdate.character_description = character_description;
-
-    // Aggiorna i progressi della storia
-    if (storyProgress) storyToUpdate.storyProgress = storyProgress;
-    if (storyProgress_1) storyToUpdate.storyProgress_1 = storyProgress_1;
-    if (storyProgress_2) storyToUpdate.storyProgress_2 = storyProgress_2;
-
-    // Verifica se la storia è completata
-    storyToUpdate.isCompleted = storyToUpdate.storyProgress && storyToUpdate.storyProgress_1 && storyToUpdate.storyProgress_2 ? true : false;
-
-    // Salva la storia aggiornata
-    await storyToUpdate.save();
-    res.status(200).json({ 
-      message: 'Storia aggiornata con successo', 
-      updatedStory: storyToUpdate 
-    });
+    res.status(200).json({ story });
   } catch (error) {
-    console.error('Errore nell\'aggiornamento della storia:', error.message);
-    res.status(500).json({ 
-      message: 'Errore nell\'aggiornamento della storia', 
-      error: error.message 
-    });
+    console.error('Errore nel recupero della storia:', error.message);
+    res.status(500).json({ message: 'Errore nel recupero della storia', error: error.message });
   }
 });
+
+// Endpoint per il recupero di una singola conversazione
+app.get('/api/get-conversation/:conversationId', async (req, res) => {
+  try {
+    const conversation = await Conversation.findById(req.params.conversationId);
+
+    if (!conversation) {
+      return res.status(404).json({ message: 'Conversazione non trovata' });
+    }
+
+    res.status(200).json({ conversation });
+  } catch (error) {
+    console.error('Errore nel recupero della conversazione:', error.message);
+    res.status(500).json({ message: 'Errore nel recupero della conversazione', error: error.message });
+  }
+});
+
+// Endpoint per l'aggiornamento di una singola storia
+app.put('/api/update-story/:conversationId', async (req, res) => {
+  try {
+    const story = await Story.findByIdAndUpdate(req.params.conversationId, req.body, { new: true });
+
+    if (!story) {
+      return res.status(404).json({ message: 'Storia non trovata' });
+    }
+
+    res.status(200).json({ story });
+  } catch (error) {
+    console.error('Errore nell\'aggiornamento della storia:', error.message);
+    res.status(500).json({ message: 'Errore nell\'aggiornamento della storia', error: error.message });
+  }
+});
+
 
 // Avvia il server
 app.listen(port, () => {
