@@ -4,6 +4,7 @@ const express = require('express');
 const app = express();
 const port = 3000;
 
+
 app.use(express.json());
 
 // Connessione unica a MongoDB senza opzioni deprecate
@@ -12,16 +13,17 @@ mongoose.connect(process.env.MONGO_URI, {
     username: process.env.MONGO_USERNAME,
     password: process.env.MONGO_PASSWORD
   },
-  authSource: "admin"  // Il database dove l'utente è stato creato
+  authSource: "admin"  // Assicurati che sia il database giusto per l'autenticazione
 }).then(() => {
   console.log('Connesso al database adventure');
 }).catch(err => {
   console.error('Errore di connessione a MongoDB:', err);
 });
 
+
 // Schema per Conversazioni
 const conversationSchema = new mongoose.Schema({
-  conversation_id: { type: String, required: true },
+  conversation_id: { type: String, required: true, unique: true },  
   chat_id: { type: String, required: true },
   user_id: { type: String, required: true },
   user_name: String,
@@ -31,18 +33,22 @@ const conversationSchema = new mongoose.Schema({
   chosen_location: String,
   character_description: String,
   story_text: { type: String, required: true },
-  isCompleted: { type: Boolean, default: false },  // Aggiunto per indicare se la storia è completa
+  end_story: { type: String, default: '' }, 
+  isCompleted: { type: Boolean, default: false },  
   created_at: { type: Date, default: Date.now }
 });
+
+
 
 const Conversation = mongoose.model('Conversation', conversationSchema);
-
-// Schema per Storie
+// story Schema
 const storySchema = new mongoose.Schema({
   conversation_id: { type: String, required: true, ref: 'Conversation' },  // ID della conversazione
-  story_text: { type: String, required: true },                            // Testo della storia completa
+  story_text: { type: String, required: true },
+  end_story: { type: String, default: '' },  // Imposta il valore di default come stringa vuota
   created_at: { type: Date, default: Date.now }
 });
+
 
 const Story = mongoose.model('Story', storySchema);
 
@@ -60,6 +66,7 @@ app.post('/api/save-conversation', async (req, res) => {
       chosen_location,
       character_description,
       story_text,
+      end_story,
       isCompleted
     } = req.body;
 
@@ -79,6 +86,7 @@ app.post('/api/save-conversation', async (req, res) => {
       chosen_location,
       character_description,
       story_text,
+      end_story,
       isCompleted
     });
 
@@ -87,7 +95,9 @@ app.post('/api/save-conversation', async (req, res) => {
     // Salva la storia completa nel database
     const newStory = new Story({
       conversation_id,
-      story_text: story_text
+      story_text: story_text,
+      end_story: end_story
+      
     });
 
     await newStory.save();
@@ -195,21 +205,36 @@ app.get('/api/get-conversation/:conversationId', async (req, res) => {
   }
 });
 
-// Endpoint per l'aggiornamento di una singola storia
-app.put('/api/update-story/:conversationId', async (req, res) => {
-  try {
-    const story = await Story.findByIdAndUpdate(req.params.conversationId, req.body, { new: true });
 
-    if (!story) {
-      return res.status(404).json({ message: 'Storia non trovata' });
+// Endpoint per aggiornare una conversazione esistente
+app.put('/api/update-conversation/:conversationId', async (req, res) => {
+  const { conversationId } = req.params;
+  const data = req.body;
+
+  try {
+    // Cerca la conversazione in base a conversation_id (non _id) e aggiorna o crea
+    const updatedConversation = await Conversation.findOneAndUpdate(
+      { conversation_id: conversationId }, // Cerca basato su conversation_id
+      data, // I dati da aggiornare
+      {
+        new: true, // Restituisce il documento aggiornato
+        upsert: true, // Crea il documento se non esiste
+      }
+    );
+
+    if (!updatedConversation) {
+      return res.status(404).json({ error: 'Conversazione non trovata' });
     }
 
-    res.status(200).json({ story });
+    res.status(200).json(updatedConversation);
   } catch (error) {
-    console.error('Errore nell\'aggiornamento della storia:', error.message);
-    res.status(500).json({ message: 'Errore nell\'aggiornamento della storia', error: error.message });
+    console.error('Errore durante l\'aggiornamento della conversazione:', error.message);
+    res.status(500).json({ error: 'Errore durante l\'aggiornamento della conversazione.' });
   }
 });
+
+
+
 
 
 // Avvia il server
