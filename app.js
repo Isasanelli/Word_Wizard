@@ -38,8 +38,6 @@ const conversationSchema = new mongoose.Schema({
   created_at: { type: Date, default: Date.now }
 });
 
-
-
 const Conversation = mongoose.model('Conversation', conversationSchema);
 // story Schema
 const storySchema = new mongoose.Schema({
